@@ -1,0 +1,25 @@
+name: Publish verified desktop installers
+on:
+  workflow_dispatch:
+    inputs:
+      transfer:
+        description: Verified temporary installer artifact references
+        required: true
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: public-installer-transfer
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Transfer and verify packages before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node publish.cjs
