@@ -72,11 +72,11 @@ async function main() {
     if (fs.statSync(file).size !== manifest.bytes || sha(file) !== manifest.sha256) throw new Error('Installer checksum did not match.');
     const filename = `noring${role === 'server' ? '-manager' : ''}-${win ? 'windows' : 'macos-intel'}-${spec.version}.${win ? 'exe' : 'dmg'}`;
     const asset = await upload(release, filename, file, manifest.sha256);
-    installers.push({ ...manifest, file: filename, url: asset.browser_download_url });
+    installers.push({ ...manifest, file: filename, url: `https://github.com/${repository}/releases/download/v${spec.version}/${filename}` });
     fs.rmSync(folder, { recursive: true });
   }
   const manifestFile = path.join(root, 'release-manifest.json');
-  fs.writeFileSync(manifestFile, JSON.stringify({ version: spec.version, release: release.html_url, installers }, null, 2));
+  fs.writeFileSync(manifestFile, JSON.stringify({ version: spec.version, release: `https://github.com/${repository}/releases/tag/v${spec.version}`, installers }, null, 2));
   await upload(release, 'release-manifest.json', manifestFile, sha(manifestFile));
   if (release.draft) await request(`/releases/${release.id}`, { method: 'PATCH', body: JSON.stringify({ draft: false }) });
   console.log(`Published ${release.html_url}`);
