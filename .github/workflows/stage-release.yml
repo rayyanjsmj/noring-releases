@@ -1,0 +1,63 @@
+name: Stage verified desktop and Android release files
+on:
+  workflow_dispatch:
+    inputs:
+      transfer:
+        description: Verified temporary installer artifact references
+        required: true
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: public-release-staging
+  cancel-in-progress: false
+jobs:
+  verify-windows-installation:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify Student installs machine enrollment and startup for domain users
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          try {
+            $event = Get-Content $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+            $spec = $event.inputs.transfer | ConvertFrom-Json
+            $expected = 'noring-windows-' + $spec.version + '.exe'
+            $item = @($spec.files | Where-Object name -EQ $expected)
+            if ($item.Count -ne 1) { throw 'Invalid target' }
+            $uri = [Uri]$item[0].url
+            if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'release-assets.githubusercontent.com') { throw 'Invalid download origin' }
+            Write-Output "::add-mask::$uri"
+            $folder = Join-Path $env:RUNNER_TEMP 'noring-student-install-check'
+            New-Item $folder -ItemType Directory | Out-Null
+            $installer = Join-Path $folder 'student.exe'
+            Invoke-WebRequest -Uri $uri -OutFile $installer
+            if ('sha256:' + (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower() -ne $item[0].digest) { throw 'Installer checksum mismatch' }
+            $process = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait
+            if ($process.ExitCode -ne 0) { throw 'Installer failed' }
+            $shared = Join-Path $env:ProgramData 'Noring\ClassroomDisplay'
+            if (-not (Test-Path $shared -PathType Container)) { throw 'Machine enrollment folder missing' }
+            $users = @((Get-Acl $shared).Access | Where-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-32-545' -and $_.AccessControlType -eq 'Allow' -and ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Modify) -eq [System.Security.AccessControl.FileSystemRights]::Modify })
+            if ($users.Count -eq 0) { throw 'Domain-user enrollment access missing' }
+            $shortcutPath = Join-Path ([Environment]::GetFolderPath('CommonStartup')) 'Noring Classroom.lnk'
+            if (-not (Test-Path $shortcutPath)) { throw 'Machine Startup shortcut missing' }
+            $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
+            if ($shortcut.Arguments -ne '--role=display --background' -or -not (Test-Path $shortcut.TargetPath)) { throw 'Machine Startup target is invalid' }
+            Write-Output 'Windows Student silent installation, shared-folder permissions, and all-user startup verified.'
+          } catch {
+            Write-Error 'Windows Student installer verification failed. Public publication is blocked.'
+          }
+  publish:
+    needs: verify-windows-installation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Transfer and verify packages before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node copy-installers.cjs
